@@ -23,7 +23,7 @@ permissions:
 jobs:
   typecheck:
     name: typecheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - name: Checkout repository
@@ -50,7 +50,7 @@ jobs:
 
   unit:
     name: unit
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - name: Checkout repository
