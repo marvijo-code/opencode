@@ -2,8 +2,13 @@ name: fork checks
 
 # The upstream `check` and `test` workflows run on Blacksmith runners
 # (blacksmith-4vcpu-ubuntu-2404), which this fork does not install, so they never report a result here.
-# This workflow is a copy of their gates that runs on GitHub-hosted runners. Keep the steps in sync with
-# .github/workflows/check.yml and the unit job in .github/workflows/test.yml when pulling from upstream.
+# This workflow is a copy of their gates that runs on the self-hosted runner registered on the OVH VPS
+# (label `opencode-ci`). Keep the steps in sync with .github/workflows/check.yml and the unit job in
+# .github/workflows/test.yml when pulling from upstream.
+#
+# The VPS is a shared 4 vCPU / 7.6 GB box with a nearly full disk, so this copy runs one job at a time,
+# asks for explicit free space before installing, and removes node_modules afterwards. Do not drop the
+# cleanup steps: a full workspace is about 3 GB and the live services on that box need the room.
 
 on:
   push:
@@ -23,9 +28,17 @@ permissions:
 jobs:
   typecheck:
     name: typecheck
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    # Never let a pull request from a fork run code on the VPS.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, opencode-ci]
+    timeout-minutes: 60
     steps:
+      - name: Check disk space
+        run: |
+          avail=$(df --output=avail -k "$RUNNER_WORKSPACE" | tail -1)
+          echo "free space: $((avail / 1024)) MiB"
+          test "$avail" -gt 4194304
+
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -39,8 +52,9 @@ jobs:
         run: bun run lint
 
       # Local `bun run check` uses `bun check`; CI keeps the official TypeScript compiler as the source of truth.
+      # Two projects at a time, because the box is shared with live services.
       - name: Typecheck (TypeScript 7.1)
-        run: bun run typecheck:tsc
+        run: bun turbo typecheck:tsc --concurrency=2
 
       # Every GUI package file a pull request adds or edits must be free of oxlint problems, warn-level rules
       # (anti-slop) included. Against the merge's first parent, as upstream does.
@@ -48,11 +62,22 @@ jobs:
         if: github.event_name == 'pull_request'
         run: bun run lint:changed HEAD^1
 
+      - name: Reclaim workspace
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE"/node_modules "$GITHUB_WORKSPACE"/packages/*/node_modules
+
   unit:
     name: unit
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, opencode-ci]
+    timeout-minutes: 60
     steps:
+      - name: Check disk space
+        run: |
+          avail=$(df --output=avail -k "$RUNNER_WORKSPACE" | tail -1)
+          echo "free space: $((avail / 1024)) MiB"
+          test "$avail" -gt 4194304
+
       - name: Checkout repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -75,15 +100,18 @@ jobs:
           git config --global user.name "opencode"
 
       - name: Run unit tests
-        timeout-minutes: 20
+        timeout-minutes: 40
         run: |
-          # Two vCPUs are not enough for the default concurrency, so this copy runs two test processes at a time.
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            GITHUB_ACTIONS=false bun turbo test --concurrency=2
+            GITHUB_ACTIONS=false bun turbo test --concurrency=1
             exit 0
           fi
-          GITHUB_ACTIONS=false bun turbo test --affected --concurrency=2
+          GITHUB_ACTIONS=false bun turbo test --affected --concurrency=1
         env:
           OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: "false"
           TURBO_SCM_BASE: ${{ github.event_name == 'pull_request' && format('{0}^1', github.sha) || github.event.before }}
           TURBO_SCM_HEAD: ${{ github.sha }}
+
+      - name: Reclaim workspace
+        if: always()
+        run: rm -rf "$GITHUB_WORKSPACE"/node_modules "$GITHUB_WORKSPACE"/packages/*/node_modules
