@@ -89,14 +89,14 @@ test("the Home shortcut focuses session search, and the Home button leaves focus
   await expect(editor).toBeEditable({ timeout: APP_READY_TIMEOUT })
   await editor.click()
 
-  await page.keyboard.press("ControlOrMeta+b")
+  await page.keyboard.press("Alt+Home")
   const search = page.getByRole("textbox", { name: /Search sessions/ })
   await expect(search).toBeFocused()
   await page.keyboard.type("jump")
   await expect(page.getByRole("option")).toHaveCount(1)
   await expect(page.getByRole("option")).toContainText(fixture.expected.targetTitle)
 
-  await page.keyboard.press("ControlOrMeta+b")
+  await page.keyboard.press("Alt+Home")
   await expectPath(page, sessionHref(fixture.sourceID))
 
   await page.getByRole("button", { name: "Home", exact: true }).click()

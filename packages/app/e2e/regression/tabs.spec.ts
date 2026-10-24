@@ -423,6 +423,33 @@ test("vertical tab gaps hover and select the nearest row", async ({ page }) => {
   }
 })
 
+test("Ctrl+B opens the left sidebar from horizontal tabs, then toggles it", async ({ page }) => {
+  await mockWorkspace(page, {
+    name: "Tabs",
+    sessions: [a, b],
+    seed: { tabs: [a.id] },
+  })
+  await page.goto(sessionHref(a.id))
+
+  const sidebar = page.locator('[data-slot="vertical-tabs-sidebar"]')
+  await expect(page.locator('[data-slot="titlebar-tabs"]')).toHaveCount(1)
+  await expect(sidebar).toHaveCount(0)
+
+  await page.keyboard.press("ControlOrMeta+b")
+  await expect(sidebar).toHaveAttribute("data-state", "open")
+  await expect(sidebar).toHaveCSS("width", "260px")
+  await expect(sidebar.locator(`[data-titlebar-tab-link][href="${sessionHref(a.id)}"]`)).toBeVisible()
+  await expect(page.locator('[data-slot="titlebar-tabs"]')).toHaveCount(0)
+
+  await page.keyboard.press("ControlOrMeta+b")
+  await expect(sidebar).toHaveAttribute("data-state", "closed")
+  await expect(sidebar).toHaveCSS("width", "0px")
+
+  await page.keyboard.press("ControlOrMeta+b")
+  await expect(sidebar).toHaveAttribute("data-state", "open")
+  await expect(sidebar.locator(`[data-titlebar-tab-link][href="${sessionHref(a.id)}"]`)).toBeVisible()
+})
+
 test("tab preview opens cold, switches immediately between tabs, and closes outside the strip", async ({ page }) => {
   const d = { id: "ses_tab_d", title: "Library" }
   await mockWorkspace(page, {

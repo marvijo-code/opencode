@@ -54,7 +54,7 @@ const macTrafficLightsTopClearance = 28
 // titlebar row stays 16px clear of it, as ChatGPT's phone header does. Without one, 8px matches the content gap below.
 const mobileTopClearance = "max(8px, min(16px, env(safe-area-inset-top, 0px) * 1000))"
 
-export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
+export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement; open?: () => boolean; toggle?: () => void } }) {
   const platform = usePlatform()
   const command = useCommand()
   const language = useLanguage()
@@ -450,7 +450,7 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                 id: "home.toggle",
                 title: language.t("home.title"),
                 category: language.t("command.category.view"),
-                keybind: windows() ? "alt+home" : "mod+b",
+                keybind: "alt+home",
                 hidden: true,
                 onSelect: () => {
                   if (layout.route().type !== "home") layout.home.searchFocus.request()
@@ -539,6 +539,21 @@ export function Titlebar(props: { verticalTabs?: { mount?: HTMLElement } }) {
                 </Show>
                 <Show when={windows() || linux()}>
                   <WindowsAppMenu command={command} platform={platform} />
+                </Show>
+                <Show when={windows() && props.verticalTabs?.toggle}>
+                  <Tooltip placement="bottom" value={language.t("command.sidebar.toggle")}>
+                    <IconButton
+                      type="button"
+                      variant="ghost-muted"
+                      size="large"
+                      class="shrink-0 [app-region:no-drag]"
+                      onClick={() => props.verticalTabs?.toggle?.()}
+                      aria-label={language.t("command.sidebar.toggle")}
+                      aria-controls="vertical-tabs-sidebar"
+                      aria-expanded={props.verticalTabs?.open?.() ?? false}
+                      icon={<Icon name={props.verticalTabs?.open?.() ? "layout-left-full" : "layout-left"} />}
+                    />
+                  </Tooltip>
                 </Show>
                 <Show when={!mobile() && !props.verticalTabs}>{homeButton()}</Show>
 

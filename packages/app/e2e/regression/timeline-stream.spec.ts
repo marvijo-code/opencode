@@ -779,7 +779,7 @@ test.describe("Working", () => {
 })
 
 test.describe("background shortcut", () => {
-  test("offers a standalone running subagent to the background with Ctrl+B", async ({ page }) => {
+  test("offers a standalone running subagent to the background with the background shortcut", async ({ page }) => {
     await setupTimeline(page, {
       settings: { timelineDetail: { ...detailed, subagents: { placement: "separate" } } },
       sessionMessages: [user, runningSubagent()],
@@ -1864,7 +1864,7 @@ async function expectBackgroundRequest(page: Page) {
       request.method() === "POST" && new URL(request.url()).pathname === `/api/session/${sessionID}/background`,
   )
 
-  await page.keyboard.press("Control+b")
+  await page.keyboard.press("ControlOrMeta+Shift+B")
   await request
 }
 

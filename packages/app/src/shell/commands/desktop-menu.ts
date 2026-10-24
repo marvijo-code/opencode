@@ -177,7 +177,12 @@ export const DESKTOP_MENU: DesktopMenu[] = [
     id: "view",
     labelKey: "desktop.menu.view",
     items: [
-      { type: "item", labelKey: "desktop.menu.toggleSidebar", command: "sidebar.toggle" },
+      {
+        type: "item",
+        labelKey: "desktop.menu.toggleSidebar",
+        command: "sidebar.toggle",
+        accelerator: { macos: "Cmd+B" },
+      },
       {
         type: "item",
         labelKey: "desktop.menu.toggleTerminal",

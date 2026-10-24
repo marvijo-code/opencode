@@ -356,7 +356,7 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
     sessionCommand({
       id: "session.background",
       title: language.t("command.session.background"),
-      keybind: "ctrl+b",
+      keybind: "mod+shift+b",
       disabled: !actions.background.blocking(),
       onSelect: actions.background.move,
     }),
