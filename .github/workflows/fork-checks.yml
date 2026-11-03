@@ -82,8 +82,9 @@ jobs:
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # Pull requests diff against the merge's first parent; pushes diff against the previous dev head.
-          fetch-depth: ${{ github.event_name == 'pull_request' && 2 || 0 }}
+          # Two commits: the pushed head and its parent. A full fetch pulls every upstream branch and does not fit on
+          # the VPS disk.
+          fetch-depth: 2
 
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
