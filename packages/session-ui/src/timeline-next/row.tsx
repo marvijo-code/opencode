@@ -31,8 +31,7 @@ import { useData } from "../context"
 import { useSources } from "../context/sources"
 import { turnSources } from "../sources/sources"
 import { SessionReadToolGroup, SessionUserMessage } from "../message/current-message"
-import { SessionCompactionMessage, SessionCompactionQueued } from "../message/message-content"
-import { taskAgentName, type ContextGroupPart } from "../tools/tool-renderer"
+import { taskAgentName } from "../tools/tool-renderer"
 import { SessionRetry } from "../components/session-retry"
 import { SessionError } from "../components/session-error"
 import type { TimelineDetail } from "../timeline/detail"
@@ -48,16 +47,17 @@ import {
 } from "../timeline/steer-arrival-machine"
 import { Badge } from "@opencode/ui/badge"
 import { attached } from "../components/message-file"
+import { CompactionMessage, CompactionQueued } from "./compaction"
 import { unwrapErrorMessage } from "./errors"
-import { TimelineEventRow } from "./event-row"
-import { noticeEvent, toolEvent } from "./events"
+import { TimelineEventItem, TimelineEventRow } from "./event-row"
+import { noticeEvent, toolEvent, type TimelineEvent } from "./events"
 import { trackNestedRails } from "./nested-rail"
 import { contentEntries, createNextTimelineProjection, resolveContent, workedDuration } from "./projection"
-import { contentOpens, diffOpens, goal as goalMessage, thoughtOpens, toolRule, userShellOpens } from "./rules"
+import { contentOpens, diffOpens, goal as goalMessage, movedInPlace, thoughtOpens, toolRule } from "./rules"
 import { Separator } from "./separator"
 import { timelineGaps } from "./spacing"
 import { AssistantContent } from "./tools/assistant-content"
-import { ContextGroup } from "./tools/context-group"
+import { ContextGroup, type ActivityGroupPart } from "./tools/context-group"
 import { FileGroup } from "./tools/file-group"
 import { PatchTool } from "./tools/patch"
 import { ShellMessage } from "./tools/shell"
@@ -119,6 +119,27 @@ export function createNextTimelineRowRenderer(input: {
     }
   })
 
+  // Subagents that have reported back, by their session: a finish or stop notice ends the work its start launched.
+  const reported = createMemo(
+    () =>
+      new Set(
+        turns().messages.flatMap((message) => {
+          const sessionID = message.type === "synthetic" ? noticeEvent(message)?.sessionID : undefined
+
+          return sessionID ? [sessionID] : []
+        }),
+      ),
+  )
+
+  // A start spins while its subagent has not reported back and its session is still working.
+  const running = (event: TimelineEvent) => {
+    const id = event.sessionID
+
+    if (event.verb !== "started" || event.failed || !id || reported().has(id)) return false
+
+    return (data.store.session_status[id]?.type ?? "idle") !== "idle"
+  }
+
   const patchOwners = createMemo(() => {
     const owners = new Map<string, string>()
     const rows = input.projection.rows()
@@ -144,7 +165,9 @@ export function createNextTimelineRowRenderer(input: {
     const messages = input.projection.messageByID()
     const context = input.projection.userContextByID()
 
-    return userMessageRuns(input.projection.rows(), [...messages.values()], (id) => {
+    const boundaries = [...messages.values()].filter((message) => !movedInPlace(message))
+
+    return userMessageRuns(input.projection.rows(), boundaries, (id) => {
       const message = messages.get(id)
       const user = context.get(id)
 
@@ -335,7 +358,7 @@ export function createNextTimelineRowRenderer(input: {
         const contents = indexGroupContents(group.refs)
         const streaming = phase(row().userMessageID).streamingReasoningRef
 
-        return group.refs.flatMap<ContextGroupPart>((ref) => {
+        return group.refs.flatMap<ActivityGroupPart>((ref) => {
           const content = contents.get(ref.messageID)?.get(ref.partID)
 
           if (content?.type === "tool") {
@@ -364,6 +387,9 @@ export function createNextTimelineRowRenderer(input: {
             ]
 
           if (ref.messageID !== ref.partID || !message) return []
+          const event = noticeEvent(message)
+
+          if (event) return [{ type: "event", id: ref.partID, event }]
 
           if (message.type !== "assistant" && message.type !== "user")
             return [{ type: "notice", id: ref.partID, render: () => <Notice messageID={ref.messageID} grouped /> }]
@@ -402,16 +428,17 @@ export function createNextTimelineRowRenderer(input: {
             open={input.disclosure.value(key()) === true}
             onOpenChange={(open) => input.disclosure.set(key(), open)}
             onSizeChange={onSizeChange}
+            onRevealShell={input.revealPart}
           />
         </div>
       )
     }
 
-    if (row().group.type === "events") {
+    if (row().group.type === "events" || row().group.type === "subagent") {
       const events = createMemo(() => {
         const group = row().group
 
-        if (group.type !== "events") return []
+        if (group.type !== "events" && group.type !== "subagent") return []
         const contents = indexGroupContents(group.refs)
 
         // A call starts the work; a notice under its message's own ID reports it back.
@@ -429,6 +456,18 @@ export function createNextTimelineRowRenderer(input: {
           return event ? [event] : []
         })
       })
+
+      if (row().group.type === "subagent") {
+        return (
+          <Show when={events()[0]}>
+            {(event) => (
+              <div data-component="timeline-subagent">
+                <TimelineEventItem event={event()} running={running(event())} />
+              </div>
+            )}
+          </Show>
+        )
+      }
 
       return (
         <TimelineEventRow
@@ -460,6 +499,7 @@ export function createNextTimelineRowRenderer(input: {
       return (
         <SessionReadToolGroup
           tools={tools()}
+          names={2}
           open={input.disclosure.value(row().group.key)}
           onOpenChange={(open) => input.disclosure.set(row().group.key, open)}
           onSizeChange={onSizeChange}
@@ -811,7 +851,7 @@ export function createNextTimelineRowRenderer(input: {
           {(message) => (
             <div data-slot="session-turn-message-container" class={`w-full ${inset()}`}>
               <div data-slot="session-turn-compaction">
-                <SessionCompactionMessage message={message()} error={compactionError()} />
+                <CompactionMessage message={message()} error={compactionError()} />
               </div>
             </div>
           )}
@@ -920,11 +960,7 @@ export function createNextTimelineRowRenderer(input: {
       <Show when={message()}>
         {(message) => (
           <div data-slot="session-turn-message-container" class={`w-full ${padding()}`}>
-            <ShellMessage
-              message={message()}
-              open={input.disclosure.value(message().id) ?? userShellOpens(input.timelineDetail())}
-              onOpenChange={(open) => input.disclosure.set(message().id, open)}
-            />
+            <ShellMessage message={message()} />
           </div>
         )}
       </Show>
@@ -1169,7 +1205,7 @@ export function createNextTimelineRowRenderer(input: {
         <Frame row={current()}>
           <div data-slot="session-turn-message-container" class={`w-full ${padding()}`}>
             <div data-slot="session-turn-compaction">
-              <SessionCompactionQueued />
+              <CompactionQueued />
             </div>
           </div>
         </Frame>
