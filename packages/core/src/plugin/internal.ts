@@ -87,7 +87,6 @@ import { McpEventTools } from "../tool/plugin/mcp-events.js"
 import { McpResourceTools } from "../tool/plugin/mcp-resource.js"
 import { OpenCodeTools } from "../tool/plugin/opencode.js"
 import { QuestionTool } from "../tool/plugin/question.js"
-import { ReadToolFileSystem } from "../tool/read-filesystem.js"
 import { ReadTool } from "../tool/plugin/read.js"
 import { ArtifactTools } from "../tool/plugin/artifact.js"
 import { AutomationTools } from "../tool/plugin/automation.js"
@@ -106,6 +105,7 @@ import BrowserPlugin from "@opencode/plugin-browser"
 import { CommandPlugin } from "./command.js"
 import { IdentityPlugin } from "./identity.js"
 import { ForkNoticePlugin } from "./fork-notice.js"
+import { HomeMemoryPlugin } from "./home-memory.js"
 import { PlanPlugin } from "./plan.js"
 import { GoalPlugin } from "./goal.js"
 import { ModelsDevPlugin } from "./models-dev.js"
@@ -161,7 +161,6 @@ const services = [
   Npm.Service,
   Permission.Service,
   Form.Service,
-  ReadToolFileSystem.Service,
   Reference.Service,
   WebSearch.Service,
   Ripgrep.Service,
@@ -225,7 +224,6 @@ export const requirements = LayerNode.group([
   Npm.node,
   Permission.node,
   Form.node,
-  ReadToolFileSystem.node,
   Reference.node,
   WebSearch.node,
   Ripgrep.node,
@@ -260,6 +258,7 @@ const pre = [
   VcsGitPlugin.Plugin,
   AgentPlugin.Plugin,
   ForkNoticePlugin.Plugin,
+  HomeMemoryPlugin.Plugin,
   PlanPlugin.Plugin,
   CommandPlugin.Plugin,
   GoalPlugin.Plugin,

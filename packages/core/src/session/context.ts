@@ -8,7 +8,6 @@ import type { SessionRequestKind } from "@opencode/plugin/effect/session"
 import { CodeModeInstructions } from "../codemode/instructions.js"
 import { CodeModeTool } from "../codemode/tool.js"
 import { Database } from "../database/database.js"
-import { Environment } from "../environment/index.js"
 import { FileAccess } from "../file-access.js"
 import { FileMutation } from "../file-mutation.js"
 import { FileWrite } from "../file-write.js"
@@ -18,6 +17,7 @@ import { InstructionDiscovery } from "../instruction-discovery.js"
 import { Instructions } from "../instructions/index.js"
 import { InstructionBuiltIns } from "../instructions/builtins.js"
 import { Location } from "../location.js"
+import { MachineInstructions } from "../machine/instructions.js"
 import { McpInstructions } from "../mcp/instructions.js"
 import { McpTool } from "../tool/mcp.js"
 import { ReferenceInstructions } from "../reference/instructions.js"
@@ -91,6 +91,7 @@ const layer = Layer.effect(
     const entries = yield* InstructionEntry.Service
     const flags = yield* Flag.Service
     const location = yield* Location.Service
+    const machineInstructions = yield* MachineInstructions.Service
     const mcpInstructions = yield* McpInstructions.Service
     const mcpTools = yield* McpTool.Service
     const models = yield* SessionRunnerModel.Service
@@ -167,7 +168,12 @@ const layer = Layer.effect(
       const policyModel = selected?.info ?? (fallbackRef && Model.Info.default(fallbackRef.providerID, fallbackRef.id))
       const tools = yield* registry.snapshot(permissions, {
         services,
-        tools: modelTools({ model: policyModel, websearch: hasWebSearch, fullCodeMode }),
+        // An agent that can't run `execute` (such as explore) keeps every tool direct, so give it the flag-off policy.
+        tools: modelTools({
+          model: policyModel,
+          websearch: hasWebSearch,
+          fullCodeMode: fullCodeMode && Tool.codeModeAvailable(permissions),
+        }),
       })
       const loaded = yield* Effect.all(
         {
@@ -176,6 +182,7 @@ const layer = Layer.effect(
           skills: skillInstructions.load(permissions),
           references: referenceInstructions.load(),
           mcp: mcpInstructions.load(tools),
+          machines: machineInstructions.load(),
           entries: entries.load(sessionID),
         },
         { concurrency: "unbounded" },
@@ -191,6 +198,7 @@ const layer = Layer.effect(
           loaded.mcp,
           loaded.references,
           loaded.skills,
+          loaded.machines,
           loaded.discovery,
           loaded.builtins,
           loaded.entries,
@@ -243,7 +251,6 @@ export const node = makeLocationNode({
     Agent.node,
     Model.node,
     Database.node,
-    Environment.node,
     FileAccess.node,
     FileMutation.node,
     FileWrite.node,
@@ -252,6 +259,7 @@ export const node = makeLocationNode({
     InstructionDiscovery.node,
     InstructionEntry.node,
     Location.node,
+    MachineInstructions.node,
     McpInstructions.node,
     McpTool.node,
     ReferenceInstructions.node,
