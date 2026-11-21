@@ -50,6 +50,21 @@ export interface Target {
   readonly externalDirectory?: ExternalDirectoryAuthorization
   /** Where the target lives. Tools act on the target through this, not through a captured Environment. */
   readonly environment: Environment.Interface
+  /** The machine the file is on, when it is not on this server. */
+  readonly machine?: Environment.ID
+}
+
+export function externalDirectoryRequest(targets: readonly Target[]) {
+  const external = Array.dedupeWith(
+    targets.flatMap((target) => (target.externalDirectory ? [target.externalDirectory] : [])),
+    (left, right) => left.resource === right.resource,
+  )
+  if (external.length === 0) return
+  return {
+    action: "external_directory",
+    resources: external.map((item) => item.resource),
+    save: external.map((item) => item.save),
+  }
 }
 
 /**
@@ -58,6 +73,9 @@ export interface Target {
  */
 export const key = (target: { readonly absolute: string; readonly environment: { readonly id: Environment.ID } }) =>
   `${target.environment.id.length}:${target.environment.id}:${target.absolute}`
+
+/** The rule "always" saves for a file action: every file on the target's machine, which only that machine's rules allow. */
+export const always = (target: Target) => (target.machine ? `${target.machine}:*` : "*")
 
 export type Invocation = Pick<Tool.Context, "sessionID" | "agent" | "messageID" | "id">
 
@@ -213,6 +231,7 @@ const layer = Layer.effect(
           save: `${prefix}${path.posix.join(directory, "*")}`,
         },
         environment: machineEnvironment,
+        machine: place.environment.id,
       } satisfies Target
     })
 
@@ -221,15 +240,10 @@ const layer = Layer.effect(
       context: Invocation,
       metadata?: Permission.AssertInput["metadata"],
     ) {
-      const external = Array.dedupeWith(
-        targets.flatMap((target) => (target.externalDirectory ? [target.externalDirectory] : [])),
-        (left, right) => left.resource === right.resource,
-      )
-      if (external.length === 0) return
+      const request = externalDirectoryRequest(targets)
+      if (!request) return
       yield* permission.assert({
-        action: "external_directory",
-        resources: external.map((item) => item.resource),
-        save: external.map((item) => item.save),
+        ...request,
         ...(metadata === undefined ? {} : { metadata }),
         ...Permission.invocation(context),
       })
@@ -260,7 +274,7 @@ const layer = Layer.effect(
       yield* permission.assert({
         action: "read",
         resources: [target.resource],
-        save: ["*"],
+        save: [always(target)],
         ...Permission.invocation(context),
       })
       return target
