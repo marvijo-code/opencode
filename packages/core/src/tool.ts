@@ -363,7 +363,7 @@ const layer = Layer.effect(
                   }
                   catalogs.set(key, entry)
                 }
-                return { tool, catalog: entry.value, definition: entry.definition }
+                return { tool, inventory, catalog: entry.value, definition: entry.definition }
               })()
           return {
             ...(codemode === undefined ? {} : { codeModeCatalog: codemode.catalog }),
@@ -390,11 +390,24 @@ const layer = Layer.effect(
               if (!requested && input.definitions && (direct.has(event.tool) || codemode?.tool.name === event.tool))
                 return yield* new Tool.Error({ message: `Tool is not available for this request: ${event.tool}` })
               const name = requested?.name ?? event.tool
-              if (name === "execute" && codemode) {
-                const run = (ctx: Tool.Context) => executeTool(codemode.tool, name, event.input, ctx)
+              // A tool this request only offers inside Code Mode, called by the model at the top level or renamed there by
+              // a plugin, runs as a Code Mode call when the request offered execute.
+              const found =
+                codemode &&
+                name !== "execute" &&
+                !direct.has(name) &&
+                (!input.definitions || Array.from(input.definitions.values()).some((item) => item.name === "execute"))
+                  ? CodeModeTool.find(codemode.inventory, name)
+                  : undefined
+              if (codemode && (name === "execute" || found)) {
+                // Like an execute program, it moves to the background when it runs long.
+                const run = (ctx: Tool.Context) =>
+                  found
+                    ? executeTool(found.registration, found.id, event.input, { ...ctx, codemode: true })
+                    : executeTool(codemode.tool, name, event.input, ctx)
                 const background = yield* CodeModeJob.Current
                 return yield* background
-                  ? background(context, run, full ? executeOptions(event.input) : undefined)
+                  ? background(context, run, full && !found ? executeOptions(event.input) : undefined)
                   : run(context)
               }
               const tool = direct.get(name)
