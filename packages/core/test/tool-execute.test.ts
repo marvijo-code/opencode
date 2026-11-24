@@ -2,10 +2,16 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import fs from "fs/promises"
 import path from "path"
 import { CodeModeDiffs } from "@opencode/core/codemode/diffs"
+import { CodeModeApi } from "@opencode/core/codemode/api"
 import { CodeModeTool } from "@opencode/core/codemode/tool"
+import { ai } from "@opencode/ai/effect"
+import { OpenAI } from "@opencode/ai/providers"
+import { compileRequest } from "@opencode/ai/testing"
+import { Location } from "@opencode/core/location"
+import { AbsolutePath } from "@opencode/core/schema"
 import { Permission } from "@opencode/core/permission"
 import { Tool } from "@opencode/core/tool"
-import { execute } from "@opencode/core/tool/runtime"
+import { definition, execute } from "@opencode/core/tool/runtime"
 import { Agent } from "@opencode/schema/agent"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
@@ -13,6 +19,7 @@ import type { Info } from "@opencode/schema/tool"
 import { Context, Deferred, Effect, Fiber, Schema } from "effect"
 import { TestClock } from "effect/testing"
 import { codeModeServices } from "./fixture/codemode"
+import { location } from "./fixture/location"
 import { tmpdir } from "./fixture/tmpdir"
 import { it } from "./lib/effect"
 import { permissionService } from "./lib/permission"
@@ -31,7 +38,9 @@ const createCodeMode = (
   tools: ReadonlyMap<string, Info>,
   permission = allowAll,
   services?: Context.Context<CodeModeTool.Services>,
-) => CodeModeTool.create({ tools }, (_, tool, input, context) => execute(tool, input, context), permission, services)
+  api?: Context.Context<CodeModeTool.Api>,
+) =>
+  CodeModeTool.create({ tools }, (_, tool, input, context) => execute(tool, input, context), permission, services, api)
 
 test("execute takes raw code as freeform text, and Code Mode calls freeform tools with a string", async () => {
   const input = Schema.Struct({ text: Schema.NonEmptyString })
@@ -47,7 +56,7 @@ test("execute takes raw code as freeform text, and Code Mode calls freeform tool
     ["send", { ...send, freeform: { type: "text" } }],
   ])
   const codeMode = createCodeMode(tools)
-  expect(codeMode.freeform).toEqual({ type: "text" })
+  expect(codeMode.freeform).toEqual({ type: "text", field: "code" })
   expect(CodeModeTool.catalog({ tools }).tools.map((tool) => "signature" in tool && tool.signature)).toEqual([
     "tools.echo({\n  /** @minLength 1 */\n  text: string,\n}): Promise<string>",
     "tools.send(/** @minLength 1 */ text: string): Promise<string>",
@@ -57,6 +66,37 @@ test("execute takes raw code as freeform text, and Code Mode calls freeform tool
   )
   expect(JSON.parse(calls.output.output)).toEqual(["first", "second"])
   expect(calls.output.toolCalls.map((call) => call.input)).toEqual([{ text: "first" }, { text: "second" }])
+})
+
+test("with full_codemode, raw-text models set execute's timeout and background on a first line", async () => {
+  const codeMode = createCodeMode(new Map(), allowAll, codeModeServices(process.cwd()))
+  const prepared = await Effect.runPromise(
+    compileRequest(
+      ai.request({
+        model: OpenAI.model("gpt-5.4", { apiKey: "test" }),
+        prompt: "Run it.",
+        tools: [definition(codeMode)],
+      }),
+    ),
+  )
+  const [tool] = prepared.body.tools
+  expect(tool).toMatchObject({ type: "custom", name: "execute", format: { type: "grammar", syntax: "lark" } })
+  expect(tool.description).toContain(
+    "To set the parameters below, start with a `// @options:` line holding a JSON object of them",
+  )
+  expect(tool.format.definition).toContain('ff_pair: "\\"timeout\\"" " "* ":" " "* /[1-9][0-9]*/')
+  expect(tool.format.definition).toContain('| "\\"background\\"" " "* ":" " "* ("true" | "false")')
+  // Without `full_codemode` the code is the only parameter, and goes out as plain text.
+  const plain = await Effect.runPromise(
+    compileRequest(
+      ai.request({
+        model: OpenAI.model("gpt-5.4", { apiKey: "test" }),
+        prompt: "Run it.",
+        tools: [definition(createCodeMode(new Map()))],
+      }),
+    ),
+  )
+  expect(plain.body.tools[0]).toMatchObject({ type: "custom", name: "execute", format: { type: "text" } })
 })
 
 test("execute describes invariant Code Mode behavior", () => {
@@ -712,6 +752,89 @@ describe("fetch permissions", () => {
 
     expect(result.output.output).toBe("rejected")
     expect(hits).toEqual([])
+  })
+})
+
+describe("Code Mode opencode:// fetch", () => {
+  // Only the API and a Location, without the full_codemode file services: opencode:// doesn't need them.
+  const api = (handle: CodeModeApi.Interface["fetch"]) =>
+    Context.make(CodeModeApi.Service, { fetch: handle }).pipe(
+      Context.add(Location.Service, Location.Service.of(location({ directory: AbsolutePath.make("/workspace/demo") }))),
+    )
+
+  test("sends the request to CodeModeApi in the session's directory, with current naming the calling session", async () => {
+    const received: Array<{ method: string; url: string; directory: string | null; body: string }> = []
+    const result = await Effect.runPromise(
+      createCodeMode(
+        new Map(),
+        allowAll,
+        undefined,
+        api((request) =>
+          Effect.promise(async () => {
+            received.push({
+              method: request.method,
+              url: request.url,
+              directory: request.headers.get("x-opencode-directory"),
+              body: await request.text(),
+            })
+            return Response.json({ ok: true })
+          }),
+        ),
+      ).execute(
+        {
+          code: `const a = await (await fetch("opencode:///api/session/current/message?limit=1")).json()
+            const b = await (await fetch("opencode:///api/session", {
+              method: "POST",
+              headers: { "x-opencode-directory": encodeURIComponent("/custom/dir") },
+              body: JSON.stringify({ title: "demo" }),
+            })).json()
+            const c = await (await fetch("opencode:///api/vcs/status?location[directory]=/query/dir")).json()
+            return [a.ok, b.ok, c.ok]`,
+        },
+        context,
+      ),
+    )
+
+    expect(JSON.parse(result.output.output)).toEqual([true, true, true])
+    expect(received).toEqual([
+      {
+        method: "GET",
+        url: `http://opencode.local/api/session/${context.sessionID}/message?limit=1`,
+        directory: encodeURIComponent("/workspace/demo"),
+        body: "",
+      },
+      {
+        method: "POST",
+        url: "http://opencode.local/api/session",
+        directory: encodeURIComponent("/custom/dir"),
+        body: JSON.stringify({ title: "demo" }),
+      },
+      {
+        method: "GET",
+        url: "http://opencode.local/api/vcs/status?location[directory]=/query/dir",
+        directory: null,
+        body: "",
+      },
+    ])
+  })
+
+  test("accepts only opencode:///api/... URLs, reports a disabled API, and fails without one", async () => {
+    const run = (code: string, api?: Context.Context<CodeModeTool.Api>) =>
+      Effect.runPromise(createCodeMode(new Map(), allowAll, undefined, api).execute({ code }, context)).then(
+        (result) => result.output.output,
+      )
+    const never = api(() => Effect.die("never sent"))
+    for (const url of ["opencode://api/session", "opencode:x@evil.com/api/info", "opencode:///openapi.json"])
+      expect(await run(`try { await fetch(${JSON.stringify(url)}) } catch (e) { return e.message }`, never)).toContain(
+        "use opencode:///api/...",
+      )
+    const disabled = Context.add(never, CodeModeApi.Service, CodeModeApi.disabled)
+    expect(await run(`try { await fetch("opencode:///api/info") } catch (e) { return e.message }`, disabled)).toContain(
+      "OPENCODE_FLAGS=opencode_api",
+    )
+    expect(await run(`try { await fetch("opencode:///api/info") } catch (e) { return e.message }`)).toContain(
+      "opencode:// URLs are unavailable",
+    )
   })
 })
 

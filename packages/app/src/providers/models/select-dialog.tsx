@@ -504,7 +504,7 @@ function createModelSelectorController(input: {
         .map(([category, items]) => ({ category, items }))
         .sort(sortModelGroups),
     current: () => {
-      const value = model.current()
+      const value = model.standard?.() ?? model.current()
 
       return value ? modelKey(value) : undefined
     },
@@ -796,7 +796,8 @@ export function DialogSelectModel(props: { provider?: string; model?: ModelState
   }
 
   const runFlyoutEffect = (effect: DialogFlyoutEffect) => {
-    if (effect.type === "activate") return list?.setActive(effect.id)
+    // Only the pointer activates a row, so a later reorder leaves the list where it is, as for the list's own rows.
+    if (effect.type === "activate") return list?.setActive(effect.id, "pointer")
 
     if (effect.type === "cancel") return clearTimeout(timer)
 
