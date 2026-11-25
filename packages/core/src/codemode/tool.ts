@@ -1,6 +1,6 @@
 export * as CodeModeTool from "./tool.js"
 
-import { ToolFailure } from "@opencode/ai/effect"
+import { ToolFailure, type ToolDefinition } from "@opencode/ai/effect"
 import { CodeMode, Namespace, Tool } from "@opencode/codemode"
 import type {
   Content,
@@ -92,6 +92,8 @@ export type Api = CodeModeApi.Service | Location.Service
 export type Inventory = {
   readonly tools: ReadonlyMap<string, Info>
   readonly namespaces?: ReadonlyMap<string, ToolNamespace>
+  /** Each tool's registered direct definition, by registry ID. */
+  readonly definitions?: ReadonlyMap<string, ToolDefinition>
 }
 
 const extensions = [CodeModeFetch.extension, CodeModePath.extension, CodeModeBun.extension] as const
@@ -115,8 +117,11 @@ const executionServices = (
 // the runtime also has Bun's file APIs.
 const description = (full: boolean) =>
   [
-    "Run JavaScript in a confined Code Mode runtime to script tool calls and HTTP requests and compose their results.",
+    full
+      ? "Run JavaScript in a confined Code Mode runtime to work with files and data, script tool calls and HTTP requests, and compose their results."
+      : "Run JavaScript in a confined Code Mode runtime to script tool calls and HTTP requests and compose their results.",
     "Write plain JavaScript and send it exactly as written: no code fence, and no JSON or other wrapper around it.",
+    "Each call is a fresh program; nothing carries over from earlier calls.",
     full
       ? "`fetch` is available for HTTP requests, and Bun's file APIs (`Bun.file`, `Bun.write`, `Bun.Glob`) for files, in place of Node's `fs`. Imports and timers are unavailable: there is no `setTimeout` or sleep. All other external access goes through `tools`."
       : "`fetch` is available for HTTP requests. Imports, direct filesystem access, and timers are unavailable: there is no `setTimeout` or sleep. All other external access goes through `tools`.",
@@ -407,7 +412,11 @@ function inventoryTools(inventory: Inventory) {
   const root: ToolNode = { children: new Map() }
   for (const namespace of inventory.namespaces?.values() ?? []) getNode(root, namespace.name).namespace = namespace
   for (const [name, registration] of inventory.tools) {
-    const child = definition(registration, true)
+    const codemode = registration.options?.codemode
+    // Without Code Mode overrides, the Code Mode definition is the direct one.
+    const child =
+      (typeof codemode === "object" && codemode !== null ? undefined : inventory.definitions?.get(name)) ??
+      definition(registration, true)
     getNode(root, qualifiedName(registration)).tool = Tool.make({
       description: child.description,
       input: child.inputSchema,
